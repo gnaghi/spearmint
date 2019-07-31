@@ -330,6 +330,11 @@ void QDECL Com_Error( int code, const char *fmt, ... ) {
 	Q_vsnprintf (com_errorMessage, sizeof(com_errorMessage),fmt,argptr);
 	va_end (argptr);
 
+#ifdef __SWITCH__
+	// shit out the error immediately just in case
+	fprintf(stderr, "ERROR: %s\n", com_errorMessage);
+#endif
+
 	if (code != ERR_DISCONNECT)
 		Cvar_Set("com_errorMessage", com_errorMessage);
 

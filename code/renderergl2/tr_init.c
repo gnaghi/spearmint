@@ -380,6 +380,12 @@ vidmode_t r_vidModes[] =
 	{ "Mode  9: 1600x1200",		1600,	1200	},
 	{ "Mode 10: 2048x1536",		2048,	1536	},
 	{ "Mode 11: 856x480 (wide)",856,	480		}
+#ifdef __SWITCH__
+	{ "Mode 12: 640x360 (wide)",  640,	360     },
+	{ "Mode 13: 960x540 (wide)",  960,	540		},
+	{ "Mode 14: 1280x720 (wide)", 1280,	720     },
+	{ "Mode 15: 1920x1080 (wide)",1920,	1080    },
+#endif
 };
 static int	s_numVidModes = ARRAY_LEN( r_vidModes );
 

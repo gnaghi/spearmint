@@ -31,9 +31,6 @@ Suite 120, Rockville, Maryland 20850 USA.
 #ifdef WIN32 // ZTM: for numlock state
 #include <windows.h>
 #endif
-#ifdef __SWITCH__
-#include <switch.h>
-#endif
 #include <signal.h>
 #include <stdlib.h>
 #include <limits.h>
@@ -299,7 +296,7 @@ Sys_InitPIDFile
 */
 void Sys_InitPIDFile( const char *gamedir ) {
 	if( Sys_WritePIDFile( gamedir ) ) {
-#if !defined(DEDICATED) && !defined(__SWITCH__)
+#ifndef DEDICATED
 		char message[1024];
 
 		Com_sprintf( message, sizeof (message), "The last time %s ran, "
@@ -685,8 +682,6 @@ void Sys_ParseArgs( int argc, char **argv )
 #ifndef DEFAULT_BASEDIR
 #	ifdef __APPLE__
 #		define DEFAULT_BASEDIR Sys_StripAppBundle(Sys_BinaryPath())
-# elif __SWITCH__
-#   define DEFAULT_BASEDIR "."
 #	else
 #		define DEFAULT_BASEDIR Sys_BinaryPath()
 #	endif
@@ -756,15 +751,10 @@ int main( int argc, char **argv )
 	if( SDL_VERSIONNUM( ver.major, ver.minor, ver.patch ) <
 			SDL_VERSIONNUM( MINSDL_MAJOR, MINSDL_MINOR, MINSDL_PATCH ) )
 	{
-  #ifdef __SWITCH__
-    fprintf( stderr, va( "SDL version " MINSDL_VERSION " or greater is required, "
-      "but only version %d.%d.%d was found. You may be able to obtain a more recent copy "
-      "from http://www.libsdl.org/.", ver.major, ver.minor, ver.patch ) );
-  #else
 		Sys_Dialog( DT_ERROR, va( "SDL version " MINSDL_VERSION " or greater is required, "
 			"but only version %d.%d.%d was found. You may be able to obtain a more recent copy "
 			"from http://www.libsdl.org/.", ver.major, ver.minor, ver.patch ), "SDL Library Too Old" );
-  #endif
+
 		Sys_Exit( 1 );
 	}
 
@@ -805,15 +795,13 @@ int main( int argc, char **argv )
 	Com_Init( commandLine );
 	NET_Init( );
 
-#ifndef __SWITCH__
 	signal( SIGILL, Sys_SigHandler );
 	signal( SIGFPE, Sys_SigHandler );
 	signal( SIGSEGV, Sys_SigHandler );
 	signal( SIGTERM, Sys_SigHandler );
 	signal( SIGINT, Sys_SigHandler );
-#endif
 
-#if !defined DEDICATED && !defined __APPLE__ && !defined WIN32 && !defined __SWITCH__
+#if !defined DEDICATED && !defined __APPLE__ && !defined WIN32
 	// HACK: Before SDL 2.0.4, Linux (X11) did not set numlock or capslock state
 	//       so I made the engine always assumed num lock was on.
 	// NOTE: The SDL mod state on X11 is not set at this point even when it's fixed
@@ -827,19 +815,11 @@ int main( int argc, char **argv )
 	}
 #endif
 
-#ifdef __SWITCH__
-  while( appletMainLoop() )
-  {
-    Com_Frame( );
-  }
-
-  Sys_Quit( );
-#else
 	while( 1 )
 	{
 		Com_Frame( );
 	}
-#endif
+
 	return 0;
 }
 
