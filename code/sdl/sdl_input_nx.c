@@ -45,6 +45,7 @@ Suite 120, Rockville, Maryland 20850 USA.
 static cvar_t *in_keyboardDebug     = NULL;
 static char keyboardShiftMap[MAX_KEYS];
 
+static SDL_GameController *gamepad = NULL;
 static SDL_Joystick *stick[CL_MAX_SPLITVIEW] = {NULL};
 
 static qboolean mouseAvailable = qfalse;
@@ -56,12 +57,15 @@ static cvar_t *in_nograb;
 static cvar_t *in_joystick[CL_MAX_SPLITVIEW] 			= {NULL};
 static cvar_t *in_joystickThreshold[CL_MAX_SPLITVIEW]	= {NULL};
 static cvar_t *in_joystickNo[CL_MAX_SPLITVIEW]			= {NULL};
+static cvar_t *in_joystickUseAnalog = NULL;
 
 static int in_eventTime = 0;
 
 static SDL_Window *SDL_window = NULL;
 
 #define CTRL(a) ((a)-'a'+1)
+
+static void IN_ShowOSK_f( void );
 
 /*
 ===============
@@ -702,6 +706,12 @@ static void IN_InitJoystick( void )
 	qboolean joyEnabled = qfalse;
 	char guid[64];
 
+
+	if (gamepad)
+		SDL_GameControllerClose(gamepad);
+
+
+
 	for (i = 0; i < CL_MAX_SPLITVIEW; i++) {
 		if (stick[i] != NULL) {
 			CL_CloseJoystickRemap( i );
@@ -709,6 +719,7 @@ static void IN_InitJoystick( void )
 		}
 
 		stick[i] = NULL;
+	gamepad = NULL;
 		memset(&stick_state[i], '\0', sizeof (stick_state[i]));
 
 		if( in_joystick[i]->integer ) {
@@ -748,6 +759,7 @@ static void IN_InitJoystick( void )
 		return;
 	}
 
+	in_joystickUseAnalog = Cvar_Get( "in_joystickUseAnalog", "1", CVAR_ARCHIVE );
 	if (!SDL_WasInit(SDL_INIT_GAMECONTROLLER))
 	{
 		Com_DPrintf("Calling SDL_Init(SDL_INIT_GAMECONTROLLER)...\n");
@@ -811,6 +823,9 @@ static void IN_InitJoystick( void )
 
 		stick[i] = SDL_JoystickOpen( in_joystickNo[i]->integer );
 
+	if (SDL_IsGameController(in_joystickNo[0]->integer))
+		gamepad = SDL_GameControllerOpen(in_joystickNo[0]->integer);
+
 		if (stick[i] == NULL) {
 			Com_DPrintf( "Opening joystick for player %d failed.\n", i+1 );
 			continue;
@@ -870,6 +885,246 @@ static void IN_ShutdownJoystick( void )
 	SDL_QuitSubSystem(SDL_INIT_JOYSTICK);
 }
 
+static qboolean KeyToAxisAndSign(int keynum, int *outAxis, int *outSign)
+{
+  char *bind;
+
+  if (!keynum)
+    return qfalse;
+
+  bind = Key_GetBinding(keynum);
+
+  if (!bind || *bind != '+')
+    return qfalse;
+
+  *outSign = 0;
+
+  if (Q_stricmp(bind, "+forward") == 0)
+  {
+    *outAxis = j_forward_axis->integer;
+    *outSign = j_forward->value > 0.0f ? 1 : -1;
+  }
+  else if (Q_stricmp(bind, "+back") == 0)
+  {
+    *outAxis = j_forward_axis->integer;
+    *outSign = j_forward->value > 0.0f ? -1 : 1;
+  }
+  else if (Q_stricmp(bind, "+moveleft") == 0)
+  {
+    *outAxis = j_side_axis->integer;
+    *outSign = j_side->value > 0.0f ? -1 : 1;
+  }
+  else if (Q_stricmp(bind, "+moveright") == 0)
+  {
+    *outAxis = j_side_axis->integer;
+    *outSign = j_side->value > 0.0f ? 1 : -1;
+  }
+  else if (Q_stricmp(bind, "+lookup") == 0)
+  {
+    *outAxis = j_pitch_axis->integer;
+    *outSign = j_pitch->value > 0.0f ? -1 : 1;
+  }
+  else if (Q_stricmp(bind, "+lookdown") == 0)
+  {
+    *outAxis = j_pitch_axis->integer;
+    *outSign = j_pitch->value > 0.0f ? 1 : -1;
+  }
+  else if (Q_stricmp(bind, "+left") == 0)
+  {
+    *outAxis = j_yaw_axis->integer;
+    *outSign = j_yaw->value > 0.0f ? 1 : -1;
+  }
+  else if (Q_stricmp(bind, "+right") == 0)
+  {
+    *outAxis = j_yaw_axis->integer;
+    *outSign = j_yaw->value > 0.0f ? -1 : 1;
+  }
+  else if (Q_stricmp(bind, "+moveup") == 0)
+  {
+    *outAxis = j_up_axis->integer;
+    *outSign = j_up->value > 0.0f ? 1 : -1;
+  }
+  else if (Q_stricmp(bind, "+movedown") == 0)
+  {
+    *outAxis = j_up_axis->integer;
+    *outSign = j_up->value > 0.0f ? -1 : 1;
+  }
+
+  return *outSign != 0;
+}
+
+/*
+===============
+IN_GamepadMove
+===============
+*/
+static void IN_GamepadMove( void )
+{
+	int i;
+	int translatedAxes[MAX_JOYSTICK_AXIS];
+	qboolean translatedAxesSet[MAX_JOYSTICK_AXIS];
+	qboolean changed[SDL_CONTROLLER_BUTTON_MAX] = { qfalse };
+
+	SDL_GameControllerUpdate();
+
+	// check buttons
+	for (i = 0; i < SDL_CONTROLLER_BUTTON_MAX; i++)
+	{
+		qboolean pressed = SDL_GameControllerGetButton(gamepad, SDL_CONTROLLER_BUTTON_A + i);
+		if (pressed != stick_state[0].buttons[i])
+		{
+			Com_QueueEvent(in_eventTime, SE_KEY, K_PAD0_A + i, pressed, 0, NULL);
+			stick_state[0].buttons[i] = pressed;
+			changed[i] = qtrue;
+		}
+	}
+
+	// must defer translated axes until all real axes are processed
+	// must be done this way to prevent a later mapped axis from zeroing out a previous one
+	if (in_joystickUseAnalog->integer)
+	{
+		for (i = 0; i < MAX_JOYSTICK_AXIS; i++)
+		{
+			translatedAxes[i] = 0;
+			translatedAxesSet[i] = qfalse;
+		}
+	}
+
+	// check axes
+	for (i = 0; i < SDL_CONTROLLER_AXIS_MAX; i++)
+	{
+		int axis = SDL_GameControllerGetAxis(gamepad, SDL_CONTROLLER_AXIS_LEFTX + i);
+		int oldAxis = stick_state[0].oldaaxes[i];
+
+		// Smoothly ramp from dead zone to maximum value
+		float f = ((float)abs(axis) / 32767.0f - in_joystickThreshold[0]->value) / (1.0f - in_joystickThreshold[0]->value);
+
+		if (f < 0.0f)
+			f = 0.0f;
+
+		axis = (int)(32767 * ((axis < 0) ? -f : f));
+
+		if (axis != oldAxis)
+		{
+			const int negMap[SDL_CONTROLLER_AXIS_MAX] = { K_PAD0_LEFTSTICK_LEFT,  K_PAD0_LEFTSTICK_UP,   K_PAD0_RIGHTSTICK_LEFT,  K_PAD0_RIGHTSTICK_UP, 0, 0 };
+			const int posMap[SDL_CONTROLLER_AXIS_MAX] = { K_PAD0_LEFTSTICK_RIGHT, K_PAD0_LEFTSTICK_DOWN, K_PAD0_RIGHTSTICK_RIGHT, K_PAD0_RIGHTSTICK_DOWN, K_PAD0_LEFTTRIGGER, K_PAD0_RIGHTTRIGGER };
+
+			qboolean posAnalog = qfalse, negAnalog = qfalse;
+			int negKey = negMap[i];
+			int posKey = posMap[i];
+
+			if (in_joystickUseAnalog->integer)
+			{
+				int posAxis = 0, posSign = 0, negAxis = 0, negSign = 0;
+
+				// get axes and axes signs for keys if available
+				posAnalog = KeyToAxisAndSign(posKey, &posAxis, &posSign);
+				negAnalog = KeyToAxisAndSign(negKey, &negAxis, &negSign);
+
+				// positive to negative/neutral -> keyup if axis hasn't yet been set
+				if (posAnalog && !translatedAxesSet[posAxis] && oldAxis > 0 && axis <= 0)
+				{
+					translatedAxes[posAxis] = 0;
+					translatedAxesSet[posAxis] = qtrue;
+				}
+
+				// negative to positive/neutral -> keyup if axis hasn't yet been set
+				if (negAnalog && !translatedAxesSet[negAxis] && oldAxis < 0 && axis >= 0)
+				{
+					translatedAxes[negAxis] = 0;
+					translatedAxesSet[negAxis] = qtrue;
+				}
+
+				// negative/neutral to positive -> keydown
+				if (posAnalog && axis > 0)
+				{
+					translatedAxes[posAxis] = axis * posSign;
+					translatedAxesSet[posAxis] = qtrue;
+				}
+
+				// positive/neutral to negative -> keydown
+				if (negAnalog && axis < 0)
+				{
+					translatedAxes[negAxis] = -axis * negSign;
+					translatedAxesSet[negAxis] = qtrue;
+				}
+			}
+
+			// keyups first so they get overridden by keydowns later
+
+			// positive to negative/neutral -> keyup
+			if (!posAnalog && posKey && oldAxis > 0 && axis <= 0)
+				Com_QueueEvent(in_eventTime, SE_KEY, posKey, qfalse, 0, NULL);
+
+			// negative to positive/neutral -> keyup
+			if (!negAnalog && negKey && oldAxis < 0 && axis >= 0)
+				Com_QueueEvent(in_eventTime, SE_KEY, negKey, qfalse, 0, NULL);
+
+			// negative/neutral to positive -> keydown
+			if (!posAnalog && posKey && oldAxis <= 0 && axis > 0)
+				Com_QueueEvent(in_eventTime, SE_KEY, posKey, qtrue, 0, NULL);
+
+			// positive/neutral to negative -> keydown
+			if (!negAnalog && negKey && oldAxis >= 0 && axis < 0)
+				Com_QueueEvent(in_eventTime, SE_KEY, negKey, qtrue, 0, NULL);
+
+			stick_state[0].oldaaxes[i] = axis;
+		}
+	}
+
+	// set translated axes
+	if (in_joystickUseAnalog->integer)
+	{
+		for (i = 0; i < MAX_JOYSTICK_AXIS; i++)
+		{
+			if (translatedAxesSet[i])
+				Com_QueueEvent(in_eventTime, SE_JOYSTICK_AXIS, i, translatedAxes[i], 0, NULL);
+		}
+	}
+
+	// HACK: in menus, also generate mouse events from some of the buttons and left analog
+	//       also translate dpad presses into arrow keys because UI progs don't recognize them
+	if (clc.state == CA_DISCONNECTED || clc.state == CA_CINEMATIC )
+	{
+		int mousedx = stick_state[0].oldaaxes[0];
+		int mousedy = stick_state[0].oldaaxes[1];
+
+		if (abs(mousedx) > 32 || abs(mousedy) > 32)
+			Com_QueueEvent( in_eventTime, SE_MOUSE, mousedx / 3072, mousedy / 3072, 0, NULL );
+
+		if (changed[SDL_CONTROLLER_BUTTON_A])
+			Com_QueueEvent( in_eventTime, SE_KEY, K_MOUSE2, stick_state[0].buttons[SDL_CONTROLLER_BUTTON_A], 0, NULL );
+		if (changed[SDL_CONTROLLER_BUTTON_B])
+			Com_QueueEvent( in_eventTime, SE_KEY, K_MOUSE1, stick_state[0].buttons[SDL_CONTROLLER_BUTTON_B], 0, NULL );
+
+		// show OSK if L is pressed in a menu
+		if (changed[SDL_CONTROLLER_BUTTON_LEFTSHOULDER] && stick_state[0].buttons[SDL_CONTROLLER_BUTTON_LEFTSHOULDER])
+			IN_ShowOSK_f( );
+		// use X to delete characters in menu fields
+		if (changed[SDL_CONTROLLER_BUTTON_RIGHTSHOULDER] && stick_state[0].buttons[SDL_CONTROLLER_BUTTON_RIGHTSHOULDER])
+			Com_QueueEvent( in_eventTime, SE_CHAR, CTRL('h'), 0, 0, NULL );
+		// use dpad to control menu cursor
+		if (changed[SDL_CONTROLLER_BUTTON_DPAD_UP])
+			Com_QueueEvent( in_eventTime, SE_KEY, K_UPARROW, stick_state[0].buttons[SDL_CONTROLLER_BUTTON_DPAD_UP], 0, NULL );
+		if (changed[SDL_CONTROLLER_BUTTON_DPAD_DOWN])
+			Com_QueueEvent( in_eventTime, SE_KEY, K_DOWNARROW, stick_state[0].buttons[SDL_CONTROLLER_BUTTON_DPAD_DOWN], 0, NULL );
+		if (changed[SDL_CONTROLLER_BUTTON_DPAD_LEFT])
+			Com_QueueEvent( in_eventTime, SE_KEY, K_LEFTARROW, stick_state[0].buttons[SDL_CONTROLLER_BUTTON_DPAD_LEFT], 0, NULL );
+		if (changed[SDL_CONTROLLER_BUTTON_DPAD_RIGHT])
+			Com_QueueEvent( in_eventTime, SE_KEY, K_RIGHTARROW, stick_state[0].buttons[SDL_CONTROLLER_BUTTON_DPAD_RIGHT], 0, NULL );
+	}
+	else
+	{
+		// In-game, dpad down to open console
+		if (changed[SDL_CONTROLLER_BUTTON_DPAD_DOWN]) {
+			Com_QueueEvent( in_eventTime, SE_KEY, K_CONSOLE, stick_state[0].buttons[SDL_CONTROLLER_BUTTON_DPAD_DOWN], 0, NULL );
+		}
+		// show OSK if L is pressed whilst in console
+		if (changed[SDL_CONTROLLER_BUTTON_LEFTSHOULDER] && stick_state[0].buttons[SDL_CONTROLLER_BUTTON_LEFTSHOULDER] )
+			IN_ShowOSK_f( );
+	}
+}
+
 /*
 ===============
 IN_JoyMove
@@ -880,6 +1135,12 @@ static void IN_JoyMove( void )
 	int total = 0;
 	int i = 0;
 	int joy;
+
+	if (gamepad)
+	{
+		IN_GamepadMove();
+		return;
+	}
 
 	for (joy = 0; joy < CL_MAX_SPLITVIEW; joy++) {
 		if (stick[joy]) {
@@ -1302,7 +1563,7 @@ void IN_Init( void *windowData )
 	in_nograb = Cvar_Get( "in_nograb", "0", CVAR_ARCHIVE );
 
 	for (i = 0; i < CL_MAX_SPLITVIEW; i++) {
-		in_joystick[i] = Cvar_Get( Com_LocalPlayerCvarName(i, "in_joystick"), "0", CVAR_ARCHIVE|CVAR_LATCH );
+		in_joystick[i] = Cvar_Get( Com_LocalPlayerCvarName(i, "in_joystick"), "1", CVAR_ARCHIVE|CVAR_LATCH );
 		in_joystickThreshold[i] = Cvar_Get( Com_LocalPlayerCvarName(i, "in_joystickThreshold"), "0.15", CVAR_ARCHIVE );
 		Cvar_CheckRange(in_joystickThreshold[i], 0, 0.9f, qfalse);
 	}
