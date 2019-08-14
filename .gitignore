@@ -40,3 +40,12 @@ profile
 *.sdf
 *.opensdf
 *.suo
+
+# Nintendo Switch
+#################
+*.elf
+*.nacp
+*.nro
+*.nso
+*.pfs0
+
