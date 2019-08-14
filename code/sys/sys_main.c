@@ -723,6 +723,31 @@ void Sys_SigHandler( int signal )
 		Sys_Exit( 2 );
 }
 
+#ifdef __SWITCH__
+static int s_nxlinkSock = -1;
+static void initNxLink()
+{
+    if (socketInitializeDefault() != 0)
+        return;
+
+    s_nxlinkSock = nxlinkStdio();
+    if (s_nxlinkSock >= 0)
+        printf("Printf output to Nxlink enabled.");
+    else
+        socketExit();
+}
+
+static void deinitNxLink()
+{
+    if (s_nxlinkSock >= 0)
+    {
+        close(s_nxlinkSock);
+        socketExit();
+        s_nxlinkSock = -1;
+    }
+}
+#endif
+
 /*
 =================
 main
@@ -735,6 +760,11 @@ int main( int argc, char **argv )
 
 	extern void Sys_LaunchAutoupdater(int argc, char **argv);
 	Sys_LaunchAutoupdater(argc, argv);
+
+
+  #ifdef __SWITCH__
+  initNxLink();
+  #endif
 
 #ifndef DEDICATED
 	// SDL version check
