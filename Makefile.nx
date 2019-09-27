@@ -164,6 +164,13 @@ SPEARMINTSRC := \
   code/qcommon/bsp_sof2.c \
   code/qcommon/bsp_q3test106.c
 
+NXSRC := \
+  code/nx/nx_gamma.c \
+  code/nx/nx_glimp.c \
+  code/nx/nx_input.c \
+  code/nx/nx_snd.c
+
+
 SOURCEFILES	:= \
 	code/client/cl_cgame.c \
 	code/client/cl_cin.c \
@@ -251,9 +258,6 @@ SOURCEFILES	:= \
 	code/botlib/l_script.c \
 	code/botlib/l_struct.c \
 	\
-	code/sdl/sdl_input_nx.c \
-	code/sdl/sdl_snd.c \
-	\
 	code/sys/con_log.c \
 	code/sys/sys_autoupdater.c \
 	\
@@ -261,11 +265,9 @@ SOURCEFILES	:= \
 	code/sys/sys_nx.c \
 	code/sys/con_passive.c \
 	\
-	code/sdl/sdl_gamma.c \
-	code/sdl/sdl_glimp.c \
-	\
 	$(GL1_SOURCEFILES) \
-  $(SPEARMINTSRC)
+  $(SPEARMINTSRC) \
+  $(NXSRC)
 
 GLSLFILES	:=\
 	code/renderergl2/glsl/bokeh_fp.glsl \
