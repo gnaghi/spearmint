@@ -217,7 +217,7 @@ static void IN_GamepadMove( void )
 
   if (clc.state == CA_DISCONNECTED || clc.state == CA_CINEMATIC )
   {
-    Com_DPrintf( "We are in Game Menu.\n" );
+//    Com_Printf( "We are in Game Menu.\n" );
 
     //Todo : add support for multiple input. For now, we only support handled mode.
 
@@ -257,16 +257,20 @@ static void IN_JoyMove( void )
 void IN_Init( void *windowData )
 {
   int nbcontrollers;  //How many controllers are connected.
-  Com_DPrintf( "IN_Init Launching\n" );
+  Com_Printf( "IN_Init Launching\n" );
+  hidScanInput();
 
   in_eventTime = Sys_Milliseconds( );
+
 
   for (uint8_t i = 0, nbcontrollers = 0; i < MAX_CONTROLLERS; i++)
   {
     if (hidIsControllerConnected(i))
     {
-      ConnectedControllers[nbcontrollers].ID = i;
-      switch ( ConnectedControllers[nbcontrollers].type = hidGetControllerType(i) )
+      HidControllerType CurrentType = (hidGetControllerType(i) & 7);
+   
+      Com_Printf( "Type %d connected.\n", CurrentType);
+      switch (CurrentType)
       {
       case TYPE_PROCONTROLLER:
       case TYPE_HANDHELD:
@@ -275,7 +279,7 @@ void IN_Init( void *windowData )
         ConnectedControllers[nbcontrollers].MaxButtons = MAX_BUTTON_HANDLED_PRO_PAIR;
         ConnectedControllers[nbcontrollers].LeftJoystick = true;  //TODO : create the structure for each controller with this already in.
         ConnectedControllers[nbcontrollers].RightJoystick = true;
-        Com_DPrintf( "Joystick-type detected. id = %d\n", i );
+        Com_Printf( "Joystick-type detected. id = %d\n", i );
         isGamepad = true;
         break;
 
@@ -285,7 +289,7 @@ void IN_Init( void *windowData )
         ConnectedControllers[nbcontrollers].MaxButtons = MAX_BUTTON_JOYCON_SINGLE;
         ConnectedControllers[nbcontrollers].LeftJoystick = true;
         ConnectedControllers[nbcontrollers].RightJoystick = false;
-        Com_DPrintf( "Joystick-type detected. id = %d\n", i );
+        Com_Printf( "Joystick-type detected. id = %d\n", i );
         isGamepad = true;
         break;
 
@@ -293,9 +297,11 @@ void IN_Init( void *windowData )
         isGamepad = false;
         ConnectedControllers[nbcontrollers].LeftJoystick = false;
         ConnectedControllers[nbcontrollers].RightJoystick = false;
-        Com_DPrintf( "Other device type detected = %d. id = %d\n", ConnectedControllers[nbcontrollers].type, i );
+        Com_Printf( "Other device type detected = %d. id = %d\n", CurrentType, i );
         break;
       }
+      ConnectedControllers[nbcontrollers].ID = i;
+      ConnectedControllers[nbcontrollers].type = CurrentType;
 
       nbcontrollers++;
 
@@ -318,10 +324,14 @@ void IN_Frame (void)
   loading = ( clc.state != CA_DISCONNECTED && clc.state != CA_ACTIVE );
 }
 
-void IN_Shutdown( void ) {
-  Com_DPrintf( "IN_Shutdown Launching\n" );
+void IN_Shutdown( void )
+{
+  Com_Printf( "IN_Shutdown Launching\n" );
 }
 
-void IN_Restart( void ) {
-  Com_DPrintf( "IN_Restart Launched\n" );
+void IN_Restart( void )
+{
+  Com_Printf( "IN_Restart Launched\n" );
+  //Todo : free all allocated memory.
+  IN_Init( NULL );
 }
