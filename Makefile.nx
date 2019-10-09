@@ -332,7 +332,7 @@ CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
 ASFLAGS	:=	-g $(ARCH)
 LDFLAGS	=	-specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 
-LIBS	:=	-lopenal -lSDL2main -lSDL2 -lEGL -lglapi -ldrm_nouveau \
+LIBS	:=	-lopenal -lSDL2main -lSDL2  -lglad -lEGL -lglapi -ldrm_nouveau -lnx \
 		-lvorbisfile -lvorbis -logg -ljpeg -lcurl -lmbedtls -lmbedx509 -lmbedcrypto -lz -lnx -lm -lstdc++
 
 #---------------------------------------------------------------------------------

@@ -50,24 +50,27 @@ typedef struct {
 // - Layout
 // - Nb of buttons
 // - Is there a oystick present
+//To get input for player 2, add K_FIRST_2JOY
+//To get input for player 3, add K_FIRST_3JOY
+//To get input for player 4, add K_FIRST_4JOY
 
 #define MAX_BUTTON_HANDLED_PRO_PAIR     14
 static buttonMapping buttonMapHandledProPair[MAX_BUTTON_HANDLED_PRO_PAIR] =
 {
-  { KEY_MINUS, K_ESCAPE },
-  { KEY_PLUS, K_ENTER },
-  { KEY_DUP, K_UPARROW },
-  { KEY_DRIGHT, K_RIGHTARROW },
-  { KEY_DDOWN, K_DOWNARROW },
-  { KEY_DLEFT, K_LEFTARROW },
-  { KEY_L, K_AUX5 },
-  { KEY_R, K_AUX6 },
+  { KEY_MINUS, K_JOY_GUIDE },
+  { KEY_PLUS, K_JOY_START },
+  { KEY_DUP, K_JOY_DPAD_UP },
+  { KEY_DRIGHT, K_JOY_DPAD_RIGHT },
+  { KEY_DDOWN, K_JOY_DPAD_DOWN },
+  { KEY_DLEFT, K_JOY_DPAD_LEFT },
+  { KEY_L, K_JOY_LEFTSHOULDER },
+  { KEY_R, K_JOY_RIGHTSHOULDER },
   { KEY_ZL, K_AUX7 },
   { KEY_ZR, K_AUX8 },
-  { KEY_A, K_AUX1 },
-  { KEY_B, K_AUX2 },
-  { KEY_X, K_AUX3 },
-  { KEY_Y, K_AUX4 },
+  { KEY_A, K_JOY_A },
+  { KEY_B, K_JOY_B },
+  { KEY_X, K_JOY_X },
+  { KEY_Y, K_JOY_Y },
 };
 
 //TODO : redo the layout, as in landscape mode, there are no ZL/ZR.
