@@ -6,12 +6,27 @@
 
 #include <EGL/egl.h>    // EGL library
 #include <EGL/eglext.h> // EGL extensions
+
+
 #include <glad/glad.h>  // glad library (OpenGL loader)
+#include "../glad/glad.h"
+#include <GL/glext.h> //Needed for OpenGL Extension
 
 #include "../renderercommon/tr_common.h"
 #include "../sys/sys_local.h"
 #include "nx_icon.h"
 
+#define HANDLED_MODE 1
+#define DOCKED_MODE 0
+
+#define DOCKED_WIDTH   1920
+#define DOCKED_HEIGHT  1080
+
+#define HANDLED_WIDTH  1280
+#define HANDLED_HEIGHT  720
+
+#define GL_MAX_TEXTURE_UNITS_ARB 0x84E2
+#define GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT 0x84FF
 
 cvar_t *r_allowSoftwareGL; // Don't abort out if a hardware visual can't be obtained
 cvar_t *r_allowResize; // make window resizable
@@ -57,8 +72,6 @@ QGL_EXT_direct_state_access_PROCS;
 #undef GLE
 
 
-
-
 qboolean ( * qwglSwapIntervalEXT)( int interval );
 void ( * qglMultiTexCoord2fARB )( GLenum texture, float s, float t );
 void ( * qglActiveTextureARB )( GLenum texture );
@@ -69,11 +82,174 @@ void ( * qglLockArraysEXT)( int, int);
 void ( * qglUnlockArraysEXT) ( void );
 
 
-static EGLDisplay g_EGLDisplay;
+static EGLDisplay s_display;
 static EGLContext g_EGLContext;
-static EGLSurface g_EGLWindowSurface;
-static EGLConfig    g_EGLConfig;
+static EGLSurface s_surface;
+static EGLConfig  g_EGLConfig;
 
+
+
+bool isExtensionSupported(const char *extension)
+{
+#ifdef GL_NUM_EXTENSIONS
+  GLint count = 0;
+  glGetIntegerv(GL_NUM_EXTENSIONS, &count);
+  for (int i = 0; i < count; ++i) {
+    const char* name = (const char*)glGetStringi(GL_EXTENSIONS, i);
+    if (name == NULL)
+      continue;
+    if (strcmp(extension, name) == 0)
+      return true;
+  }
+  return false;
+#else
+  GLubyte *where = (GLubyte *)strchr(extension, ' ');
+  if (where || *extension == '\0')
+    return false;
+
+  const GLubyte *extensions = glGetString(GL_EXTENSIONS);
+
+  const GLubyte *start = extensions;
+  for (;;) {
+    where = (GLubyte *)strstr((const char *)start, extension);
+    if (where == NULL)
+      break;
+
+    GLubyte *terminator = where + strlen(extension);
+    if (where == start || *(where - 1) == ' ')
+      if (*terminator == ' ' || *terminator == '\0')
+        return true;
+
+    start = terminator;
+  }
+
+  return false;
+#endif // GL_NUM_EXTENSIONS
+}
+
+void listExtensions(void)
+{
+#ifdef GL_NUM_EXTENSIONS
+  Com_Printf("Supported Extensions : \n");
+  GLint count = 0;
+  glGetIntegerv(GL_NUM_EXTENSIONS, &count);
+  for (int i = 0; i < count; ++i)
+  {
+    const char* name = (const char*)glGetStringi(GL_EXTENSIONS, i);
+    if (name == NULL)
+      continue;
+    if (i % 8)
+      Com_Printf("\n");
+    Com_Printf("%s ", name);
+  }
+#endif
+}
+
+
+/*
+===============
+GLimp_GetProcAddresses
+
+Get addresses for OpenGL functions.
+===============
+*/
+static qboolean GLimp_GetProcAddresses( qboolean fixedFunction ) {
+  qboolean success = qtrue;
+  const char *version;
+
+#define GLE( ret, name, ... ) qgl##name = (name##proc *) eglGetProcAddress("gl" #name); \
+  if ( qgl##name == NULL ) { \
+    Com_Printf( "ERROR: Missing OpenGL function %s\n", "gl" #name ); \
+    success = qfalse; \
+  }
+
+  // OpenGL 1.0 and OpenGL ES 1.0
+  GLE(const GLubyte *, GetString, GLenum name)
+
+  if ( !qglGetString ) {
+    Com_Error( ERR_FATAL, "glGetString is NULL" );
+  }
+
+  version = (const char *)qglGetString( GL_VERSION );
+
+  if ( !version ) {
+    Com_Error( ERR_FATAL, "GL_VERSION is NULL\n" );
+  }
+
+  if ( Q_stricmpn( "OpenGL ES", version, 9 ) == 0 ) {
+    char profile[6]; // ES, ES-CM, or ES-CL
+    sscanf( version, "OpenGL %5s %d.%d", profile, &qglesMajorVersion, &qglesMinorVersion );
+    // common lite profile (no floating point) is not supported
+    if ( Q_stricmp( profile, "ES-CL" ) == 0 ) {
+      qglesMajorVersion = 0;
+      qglesMinorVersion = 0;
+    }
+  } else {
+    sscanf( version, "%d.%d", &qglMajorVersion, &qglMinorVersion );
+  }
+
+  if ( fixedFunction ) {
+    if ( QGL_VERSION_ATLEAST( 1, 2 ) ) {
+      QGL_1_1_PROCS;
+      QGL_1_1_FIXED_FUNCTION_PROCS;
+      QGL_DESKTOP_1_1_PROCS;
+      QGL_DESKTOP_1_1_FIXED_FUNCTION_PROCS;
+    } else if ( qglesMajorVersion == 1 && qglesMinorVersion >= 1 ) {
+      // OpenGL ES 1.1 (2.0 is not backward compatible)
+      QGL_1_1_PROCS;
+      QGL_1_1_FIXED_FUNCTION_PROCS;
+      QGL_ES_1_1_PROCS;
+      QGL_ES_1_1_FIXED_FUNCTION_PROCS;
+      // error so this doesn't segfault due to NULL desktop GL functions being used
+      Com_Error( ERR_FATAL, "Unsupported OpenGL Version: %s\n", version );
+    } else {
+      Com_Error( ERR_FATAL, "Unsupported OpenGL Version (%s), OpenGL 1.2 is required\n", version );
+    }
+  } else {
+    if ( QGL_VERSION_ATLEAST( 2, 0 ) ) {
+      QGL_1_1_PROCS;
+      QGL_DESKTOP_1_1_PROCS;
+      QGL_1_3_PROCS;
+      QGL_1_5_PROCS;
+      QGL_2_0_PROCS;
+    } else if ( QGLES_VERSION_ATLEAST( 2, 0 ) ) {
+      QGL_1_1_PROCS;
+      QGL_ES_1_1_PROCS;
+      QGL_1_3_PROCS;
+      QGL_1_5_PROCS;
+      QGL_2_0_PROCS;
+      // error so this doesn't segfault due to NULL desktop GL functions being used
+      Com_Error( ERR_FATAL, "Unsupported OpenGL Version: %s\n", version );
+    } else {
+      Com_Error( ERR_FATAL, "Unsupported OpenGL Version (%s), OpenGL 2.0 is required\n", version );
+    }
+  }
+
+  if ( QGL_VERSION_ATLEAST( 3, 0 ) || QGLES_VERSION_ATLEAST( 3, 0 ) ) {
+    QGL_3_0_PROCS;
+  }
+
+#undef GLE
+
+  return success;
+}
+
+
+static void setMesaConfig()
+{
+  // Uncomment below to disable error checking and save CPU time (useful for production):
+  //setenv("MESA_NO_ERROR", "1", 1);
+
+  // Uncomment below to enable Mesa logging:
+  setenv("EGL_LOG_LEVEL", "debug", 1);
+  setenv("MESA_VERBOSE", "all", 1);
+  setenv("NOUVEAU_MESA_DEBUG", "1", 1);
+
+  // Uncomment below to enable shader debugging in Nouveau:
+  //setenv("NV50_PROG_OPTIMIZE", "0", 1);
+  //setenv("NV50_PROG_DEBUG", "1", 1);
+  //setenv("NV50_PROG_CHIPSET", "0x120", 1);
+}
 
 /*
 ===============
@@ -82,56 +258,120 @@ GLimp_InitExtensions
 */
 static void GLimp_InitExtensions( void )
 {
+//  listExtensions();
   if ( !r_allowExtensions->integer )
   {
     Com_Printf( "* IGNORING OPENGL EXTENSIONS *\n" );
     return;
   }
 
-  Com_Printf( "Initializing OpenGL extensions\n" );
+  Com_Printf( "Initializing OpenGLES extensions\n" );
 
-  glConfig.textureCompression = TC_NONE;
-  qglCompressedTexImage2DARB = NULL;
+  qglCompressedTexImage2DARB =  (PFNGLCOMPRESSEDTEXIMAGE2DARBPROC) eglGetProcAddress("glCompressedTexImage2DARB");
+  glConfig.textureCompression = TC_S3TC;    //Test TC_S3TC
+  Com_Printf( "...using GL_EXT_texture_compression_s3tc\n" );
 
+  glConfig.textureEnvAddAvailable = true;      //false foire aussi
+  Com_Printf( "...using GL_EXT_texture_env_add\n" );
 
+  glConfig.textureFilterAnisotropic = qfalse;
+
+  //Not available when I list everything, but loads with SDL version...
+  qglMultiTexCoord2fARB = NULL;
+  qglActiveTextureARB = NULL;
+  qglClientActiveTextureARB = NULL;
+
+  qglMultiTexCoord2fARB = (PFNGLMULTITEXCOORD2FARBPROC) eglGetProcAddress( "glMultiTexCoord2fARB" );
+  qglActiveTextureARB = (PFNGLACTIVETEXTUREARBPROC) eglGetProcAddress( "glActiveTextureARB" );
+  qglClientActiveTextureARB = (PFNGLCLIENTACTIVETEXTUREARBPROC) eglGetProcAddress( "glClientActiveTextureARB" );
+
+  GLint glint = 0;
+
+  qglGetIntegerv( GL_MAX_TEXTURE_UNITS_ARB, &glint );  //For a strang reason, it crashes...
+  glConfig.numTextureUnits = (int) glint;
+  Com_Printf( "...using GL_ARB_multitexture (max: %i)\n", glConfig.numTextureUnits );
+
+  qglLockArraysEXT = NULL;
+  qglUnlockArraysEXT = NULL;
+
+  qglLockArraysEXT = ( void ( APIENTRY * )( GLint, GLint ) ) eglGetProcAddress( "glLockArraysEXT" );
+  qglUnlockArraysEXT = ( void ( APIENTRY * )( void ) ) eglGetProcAddress( "glUnlockArraysEXT" );
+  Com_Printf("...using GL_EXT_compiled_vertex_array\n" );
+
+  qglGetIntegerv( GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, (GLint *)&glConfig.maxAnisotropy );
+  Com_Printf("...using GL_EXT_texture_filter_anisotropic (max: %i)\n", glConfig.maxAnisotropy );
+  glConfig.textureFilterAnisotropic = qtrue;
+
+  glConfig.deviceSupportsGamma = qfalse;
 }
 
-//Le WindowSize vaut 0, ce qui n'est pas normal.
-//Il faut comparer avec la version SDL, voir ce qu'elle fait, et limite, remplacer chaque méhode SDL par la native libNX.
 
-static qboolean nx_GLimp_Init(NWindow* win)
+//Detect and set the window size
+static qboolean nx_GLimp_SetMode(NWindow* win)
 {
-  Com_Printf( "Launching nx_GLimp_Init\n" );
-  g_EGLDisplay = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-  if (!g_EGLDisplay)
+
+  switch (appletGetOperationMode())
+  {
+  default:
+  case AppletOperationMode_Handheld:
+    glConfig.displayWidth = HANDLED_WIDTH;
+    glConfig.displayHeight = HANDLED_HEIGHT;
+    break;
+  case AppletOperationMode_Docked:
+    glConfig.displayWidth = DOCKED_WIDTH;
+    glConfig.displayHeight = DOCKED_HEIGHT;
+    break;
+  }
+
+  glConfig.displayAspect = (float)glConfig.displayWidth / (float)glConfig.displayHeight;
+  Com_Printf("Display aspect: %.3f\n", glConfig.displayAspect );
+
+  Result rsc = nwindowSetCrop(win, 0, 0, glConfig.displayWidth, glConfig.displayHeight);
+  if (rsc)
+  {
+    Com_Printf("Error nwindowSetCrop : %.d\n", rsc );
+    return qfalse;
+  }
+
+  glConfig.vidWidth = glConfig.displayWidth;
+  glConfig.vidHeight = glConfig.displayHeight;
+  glConfig.windowAspect = (float)glConfig.vidWidth / (float)glConfig.vidHeight;
+
+  return qtrue;
+}
+
+static EGLDisplay s_display;
+static EGLContext s_context;
+static EGLSurface s_surface;
+
+static bool nxinitEgl(NWindow* win)
+{
+  // Connect to the EGL default display
+  s_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+  Com_Printf("Display : 0x%08X\n", s_display);
+  Com_Printf("win  : 0x%08X\n", win);
+  if (!s_display)
   {
     Com_Printf("Could not connect to display! error: %d", eglGetError());
-    return qfalse;
+    return false;
   }
-  Com_Printf( "eglGetDisplay worked.\n" );
 
-  EGLint majorVersion;
-  EGLint minorVersion;
+  // Initialize the EGL display connection
+  eglInitialize(s_display, NULL, NULL);
 
-  if (!eglInitialize(g_EGLDisplay, &majorVersion, &minorVersion))
-  {
-    Com_Printf("eglInitialize() failed\n");
-    return qfalse;
-  }
-  Com_Printf( "eglInitialize worked.\n" );
-
+  // Select OpenGL (Core) as the desired graphics API
   if (eglBindAPI(EGL_OPENGL_API) == EGL_FALSE)
   {
     Com_Printf("Could not set API! error: %d", eglGetError());
-    return qfalse;
+    eglTerminate(s_display);
+    s_display = NULL;
+    return false;
   }
 
   // Get an appropriate EGL framebuffer configuration
   EGLConfig config;
   EGLint numConfigs;
-
-
-  static const EGLint s_configAttribs[] =
+  static const EGLint framebufferAttributeList[] =
   {
     EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
     EGL_RED_SIZE,     8,
@@ -142,100 +382,120 @@ static qboolean nx_GLimp_Init(NWindow* win)
     EGL_STENCIL_SIZE, 8,
     EGL_NONE
   };
-
-  eglChooseConfig(g_EGLDisplay, s_configAttribs, &config, 1, &numConfigs);
+  eglChooseConfig(s_display, framebufferAttributeList, &config, 1, &numConfigs);
   if (numConfigs == 0)
   {
     Com_Printf("No config found! error: %d", eglGetError());
-    return qfalse;
+    eglTerminate(s_display);
+    s_display = NULL;
+    return false;
   }
 
-  Com_Printf( "eglChooseConfig worked.\n" );
-
+  // Create an EGL window surface
+  s_surface = eglCreateWindowSurface(s_display, config, win, NULL);
+  if (!s_surface)
+  {
+    Com_Printf("Surface creation failed! error: %d", eglGetError());
+    eglTerminate(s_display);
+    s_display = NULL;
+    return false;
+  }
 
   // Create an EGL rendering context
   static const EGLint contextAttributeList[] =
   {
-    EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR, EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR,
+    EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR, EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT_KHR,
     EGL_CONTEXT_MAJOR_VERSION_KHR, 4,
     EGL_CONTEXT_MINOR_VERSION_KHR, 3,
     EGL_NONE
   };
-
-  g_EGLContext = eglCreateContext(g_EGLDisplay, config, EGL_NO_CONTEXT, contextAttributeList);
-  if (g_EGLContext == EGL_NO_CONTEXT)
+  s_context = eglCreateContext(s_display, config, EGL_NO_CONTEXT, contextAttributeList);
+  if (!s_context)
   {
-    Com_Printf("eglCreateContext() failed. error: %d", eglGetError());
-    return qfalse;
+    Com_Printf("Context creation failed! error: %d", eglGetError());
+    eglDestroySurface(s_display, s_surface);
+    s_surface = NULL;
+    eglTerminate(s_display);
+    s_display = NULL;
+    return false;
   }
 
-  Com_Printf( "eglCreateContext worked.\n" );
+  // Connect the context to the surface
+  eglMakeCurrent(s_display, s_surface, s_surface, s_context);
 
-// Create an EGL window surface
-  g_EGLWindowSurface = eglCreateWindowSurface(EGL_DEFAULT_DISPLAY, config, win, NULL); //g_EGLDisplay
-  if (g_EGLWindowSurface == EGL_NO_SURFACE)
-  {
-    Com_Printf("Surface creation failed! error: %d", eglGetError());
-    return qfalse;
-  }
-
-  Com_Printf( "eglCreateWindowSurface worked.\n" );
-  eglMakeCurrent(g_EGLDisplay, g_EGLWindowSurface, g_EGLWindowSurface, g_EGLContext);
-
-  {
-    EGLint width, height, color, depth, stencil;
-    eglQuerySurface(g_EGLDisplay, g_EGLWindowSurface, EGL_WIDTH, &width);
-    eglQuerySurface(g_EGLDisplay, g_EGLWindowSurface, EGL_HEIGHT, &height);
-    Com_Printf("Window size: %dx%d\n", width, height);
-    eglGetConfigAttrib(g_EGLDisplay, g_EGLConfig, EGL_BUFFER_SIZE, &color);
-    eglGetConfigAttrib(g_EGLDisplay, g_EGLConfig, EGL_DEPTH_SIZE, &depth);
-    eglGetConfigAttrib(g_EGLDisplay, g_EGLConfig, EGL_STENCIL_SIZE, &stencil);
-    glConfig.vidWidth = width;
-    glConfig.vidHeight = height;
-    glConfig.colorBits = color;
-    glConfig.depthBits = depth;
-    glConfig.stencilBits = stencil;
-  }
-
-  Com_Printf( "eglMakeCurrent worked.\n" );
-  // set swap interval
-  if (eglSwapInterval(g_EGLDisplay, r_swapInterval->integer) == EGL_FALSE)
+  // set swap interval r_swapInterval->integer
+  Com_Printf("Value of r_swapInterval->integer : %d\n", r_swapInterval->integer);
+  if (eglSwapInterval(s_display, 60) == EGL_FALSE)
   {
     Com_Printf("Could not set swap interval\n");
     return qfalse;
   }
-  Com_Printf( "Done init for nx.\n" );
 
-  return qtrue;
+//Todo : Fetch this value automatically.
+  glConfig.colorBits = 24;
+  glConfig.depthBits = 24;
+  glConfig.stencilBits = 8;
+
+  glConfig.displayFrequency = 60; // ri.Cvar_VariableIntegerValue( "r_displayRefresh" );
+  glConfig.stereoEnabled = qfalse;
+  glConfig.isFullscreen = qfalse; //Test with qtrue
+
+  Com_Printf( "Done Param init for nx.\n" );
+
+  return true;
 }
 
 
 void GLimp_EndFrame( void )
 {
-  eglSwapBuffers(g_EGLDisplay, g_EGLWindowSurface);
+//  Com_Printf("Launching GLimp_EndFrame\n");
+  eglSwapBuffers(s_display, s_surface);
 }
 
+
+//Trouver où est le lien entre la window opengl, et le jeu. Il FAUT qu'il y ait une connexion entre les deux...
 void GLimp_Init( qboolean fixedFunction )
 {
-  Com_Printf("Launching GLimp_Init\n");
+  Com_Printf("Launching GLimp_Init. fixedFunction : %d\n", fixedFunction);
   ri.Sys_GLimpInit( );  //Specific init for Switch. So far, it does nothing.
 
-  nx_GLimp_Init( nwindowGetDefault() );
+//Setting various cvars
+  ri.Cvar_Set( "r_mode", "-1" );
 
-  glConfig.deviceSupportsGamma = qfalse;
+  // Set mesa configuration (useful for debugging)
+  setMesaConfig();
+
+  NWindow* win = nwindowGetDefault();
+  nwindowSetDimensions(win, HANDLED_WIDTH, HANDLED_HEIGHT); //Todo : Check dynamically the resolution
+  nx_GLimp_SetMode(win);  //Todo : put everything above in this function.
+
+  if (!nxinitEgl(win))
+  {
+    Com_Printf("Error initEgl\n");
+    return;
+  }
 
   // Load OpenGL routines using glad
   gladLoadGL();
   Com_Printf("Done gladLoadGL\n");
+  GLimp_GetProcAddresses(fixedFunction);
 
-  /*
-    strncpy(glConfig.vendor_string, glGetString(GL_VENDOR), sizeof(glConfig.vendor_string));
-    strncpy(glConfig.renderer_string, glGetString(GL_RENDERER), sizeof(glConfig.renderer_string));
-    strncpy(glConfig.version_string, glGetString(GL_VERSION), sizeof(glConfig.version_string));
-    strncpy(glConfig.extensions_string, glGetString(GL_EXTENSIONS), sizeof(glConfig.extensions_string));
-  */
+  // initialize extensions
+  GLimp_InitExtensions( );
+
+  Com_Printf("Done GLimp_InitExtensions\n");
+//  Com_Printf("GL_VENDOR : %s\n", qglGetString(GL_VENDOR));
+//  Com_Printf("GL_RENDERER : %s\n", qglGetString(GL_RENDERER));
+
+  Q_strncpyz( glConfig.vendor_string, (char *) glGetString (GL_VENDOR), sizeof( glConfig.vendor_string ) );
+  Q_strncpyz( glConfig.renderer_string, (char *) glGetString (GL_RENDERER), sizeof( glConfig.renderer_string ) );
+  if (*glConfig.renderer_string && glConfig.renderer_string[strlen(glConfig.renderer_string) - 1] == '\n')
+    glConfig.renderer_string[strlen(glConfig.renderer_string) - 1] = 0;
+  Q_strncpyz( glConfig.version_string, (char *) glGetString (GL_VERSION), sizeof( glConfig.version_string ) );
+
+  Com_Printf("vendor_string : %s, renderer_string : %s, version_string . %s\n", glConfig.vendor_string, glConfig.renderer_string, glConfig.version_string);
   //Launch Input Init. Maybe, later, send the screen as a parameter.
-  Com_Printf("InitIn\n");
+  Com_Printf("InitIn launching\n");
   ri.IN_Init( NULL );
 }
 
@@ -243,21 +503,21 @@ void GLimp_Shutdown( void )
 {
   ri.IN_Shutdown();
 
-  if (g_EGLDisplay)
+  if (s_display)
   {
-    eglMakeCurrent(g_EGLDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    eglMakeCurrent(s_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     if (g_EGLContext)
     {
-      eglDestroyContext(g_EGLDisplay, g_EGLContext);
+      eglDestroyContext(s_display, g_EGLContext);
       g_EGLContext = NULL;
     }
-    if (g_EGLWindowSurface)
+    if (s_surface)
     {
-      eglDestroySurface(g_EGLDisplay, g_EGLWindowSurface);
-      g_EGLWindowSurface = NULL;
+      eglDestroySurface(s_display, s_surface);
+      s_surface = NULL;
     }
-    eglTerminate(g_EGLDisplay);
-    g_EGLDisplay = NULL;
+    eglTerminate(s_display);
+    s_display = NULL;
   }
 }
 
