@@ -2945,7 +2945,8 @@ void Com_Init( char *commandLine ) {
 	Cmd_Init ();
 
 	// get the developer cvar set as early as possible
-	com_developer = Cvar_Get("developer", "0", CVAR_TEMP);
+  Cvar_Set("developer", "1");
+	com_developer = Cvar_Get("developer", "1", CVAR_TEMP);
 
 	// done early so bind command exists
 	CL_InitKeyCommands();

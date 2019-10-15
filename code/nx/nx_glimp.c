@@ -276,23 +276,15 @@ static void GLimp_InitExtensions( void )
 
   glConfig.textureFilterAnisotropic = qfalse;
 
-  //Not available when I list everything, but loads with SDL version...
-  qglMultiTexCoord2fARB = NULL;
-  qglActiveTextureARB = NULL;
-  qglClientActiveTextureARB = NULL;
-
   qglMultiTexCoord2fARB = (PFNGLMULTITEXCOORD2FARBPROC) eglGetProcAddress( "glMultiTexCoord2fARB" );
   qglActiveTextureARB = (PFNGLACTIVETEXTUREARBPROC) eglGetProcAddress( "glActiveTextureARB" );
   qglClientActiveTextureARB = (PFNGLCLIENTACTIVETEXTUREARBPROC) eglGetProcAddress( "glClientActiveTextureARB" );
 
   GLint glint = 0;
 
-  qglGetIntegerv( GL_MAX_TEXTURE_UNITS_ARB, &glint );  //For a strang reason, it crashes...
+  qglGetIntegerv( GL_MAX_TEXTURE_UNITS_ARB, &glint );
   glConfig.numTextureUnits = (int) glint;
   Com_Printf( "...using GL_ARB_multitexture (max: %i)\n", glConfig.numTextureUnits );
-
-  qglLockArraysEXT = NULL;
-  qglUnlockArraysEXT = NULL;
 
   qglLockArraysEXT = ( void ( APIENTRY * )( GLint, GLint ) ) eglGetProcAddress( "glLockArraysEXT" );
   qglUnlockArraysEXT = ( void ( APIENTRY * )( void ) ) eglGetProcAddress( "glUnlockArraysEXT" );
@@ -348,8 +340,6 @@ static bool nxinitEgl(NWindow* win)
 {
   // Connect to the EGL default display
   s_display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-  Com_Printf("Display : 0x%08X\n", s_display);
-  Com_Printf("win  : 0x%08X\n", win);
   if (!s_display)
   {
     Com_Printf("Could not connect to display! error: %d", eglGetError());
@@ -423,24 +413,20 @@ static bool nxinitEgl(NWindow* win)
   // Connect the context to the surface
   eglMakeCurrent(s_display, s_surface, s_surface, s_context);
 
-  // set swap interval r_swapInterval->integer
-  Com_Printf("Value of r_swapInterval->integer : %d\n", r_swapInterval->integer);
-  if (eglSwapInterval(s_display, 60) == EGL_FALSE)
+  if (eglSwapInterval(s_display, r_swapInterval->integer) == EGL_FALSE)
   {
     Com_Printf("Could not set swap interval\n");
     return qfalse;
   }
 
-//Todo : Fetch this value automatically.
+//Todo : Fetch these values automatically.
   glConfig.colorBits = 24;
   glConfig.depthBits = 24;
   glConfig.stencilBits = 8;
 
   glConfig.displayFrequency = 60; // ri.Cvar_VariableIntegerValue( "r_displayRefresh" );
   glConfig.stereoEnabled = qfalse;
-  glConfig.isFullscreen = qfalse; //Test with qtrue
-
-  Com_Printf( "Done Param init for nx.\n" );
+  glConfig.isFullscreen = qfalse; 
 
   return true;
 }
@@ -448,12 +434,13 @@ static bool nxinitEgl(NWindow* win)
 
 void GLimp_EndFrame( void )
 {
-//  Com_Printf("Launching GLimp_EndFrame\n");
-  eglSwapBuffers(s_display, s_surface);
+  if ( Q_stricmp( r_drawBuffer->string, "GL_FRONT" ) != 0 )
+  {
+    eglSwapBuffers(s_display, s_surface);
+  }
+  //Todo : check docked or handled mode and change resolution.
 }
 
-
-//Trouver où est le lien entre la window opengl, et le jeu. Il FAUT qu'il y ait une connexion entre les deux...
 void GLimp_Init( qboolean fixedFunction )
 {
   Com_Printf("Launching GLimp_Init. fixedFunction : %d\n", fixedFunction);
@@ -477,15 +464,10 @@ void GLimp_Init( qboolean fixedFunction )
 
   // Load OpenGL routines using glad
   gladLoadGL();
-  Com_Printf("Done gladLoadGL\n");
   GLimp_GetProcAddresses(fixedFunction);
 
   // initialize extensions
   GLimp_InitExtensions( );
-
-  Com_Printf("Done GLimp_InitExtensions\n");
-//  Com_Printf("GL_VENDOR : %s\n", qglGetString(GL_VENDOR));
-//  Com_Printf("GL_RENDERER : %s\n", qglGetString(GL_RENDERER));
 
   Q_strncpyz( glConfig.vendor_string, (char *) glGetString (GL_VENDOR), sizeof( glConfig.vendor_string ) );
   Q_strncpyz( glConfig.renderer_string, (char *) glGetString (GL_RENDERER), sizeof( glConfig.renderer_string ) );
@@ -494,8 +476,6 @@ void GLimp_Init( qboolean fixedFunction )
   Q_strncpyz( glConfig.version_string, (char *) glGetString (GL_VERSION), sizeof( glConfig.version_string ) );
 
   Com_Printf("vendor_string : %s, renderer_string : %s, version_string . %s\n", glConfig.vendor_string, glConfig.renderer_string, glConfig.version_string);
-  //Launch Input Init. Maybe, later, send the screen as a parameter.
-  Com_Printf("InitIn launching\n");
   ri.IN_Init( NULL );
 }
 
