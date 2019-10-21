@@ -106,7 +106,7 @@ typedef struct
   bool RightJoystick;
 } ControllerInfo;
 
-#define MAX_CONTROLLERS 10
+#define MAX_CONTROLLERS 10  //Max controllers on Switch
 
 ControllerInfo ConnectedControllers[MAX_CONTROLLERS];
 bool isGamepad = false;
@@ -222,12 +222,13 @@ static void IN_GamepadMove( void )
   {
 //    Com_Printf( "We are in Game Menu.\n" );
 
-    //Todo : add support for multiple input. For now, we only support handled mode.
+    //Todo : add support for multiple input. For now, we only support handled mode and Pro controller.
 
     Mouse_Event( left_x, left_y, in_eventTime, joynum);
 
     u64 kDown = hidKeysDown(ConnectedControllers[joynum].ID); //Get all the pressed buttons.
     u64 kHeld = hidKeysHeld(ConnectedControllers[joynum].ID); //Sometimes, works better...
+
 
     if ( (kDown & KEY_B) )
     {
@@ -259,12 +260,11 @@ static void IN_JoyMove( void )
 
 void IN_Init( void *windowData )
 {
-  int nbcontrollers;  //How many controllers are connected.
+  int nbcontrollers;  //How many controllers are connected. Useless ?
   Com_Printf( "IN_Init Launching\n" );
   hidScanInput();
 
   in_eventTime = Sys_Milliseconds( );
-
 
   for (uint8_t i = 0, nbcontrollers = 0; i < MAX_CONTROLLERS; i++)
   {
@@ -282,8 +282,9 @@ void IN_Init( void *windowData )
         ConnectedControllers[nbcontrollers].MaxButtons = MAX_BUTTON_HANDLED_PRO_PAIR;
         ConnectedControllers[nbcontrollers].LeftJoystick = true;  //TODO : create the structure for each controller with this already in.
         ConnectedControllers[nbcontrollers].RightJoystick = true;
-        Com_Printf( "Joystick-type detected. id = %d\n", i );
+        Com_Printf( "Joystick-type detected. id = %d, controller number : %d\n", i, nbcontrollers );
         isGamepad = true;
+        nbcontrollers++;
         break;
 
       case TYPE_JOYCON_LEFT:
@@ -292,12 +293,12 @@ void IN_Init( void *windowData )
         ConnectedControllers[nbcontrollers].MaxButtons = MAX_BUTTON_JOYCON_SINGLE;
         ConnectedControllers[nbcontrollers].LeftJoystick = true;
         ConnectedControllers[nbcontrollers].RightJoystick = false;
-        Com_Printf( "Joystick-type detected. id = %d\n", i );
+        Com_Printf( "Joystick-type detected. id = %d, controller number : %d\n", i, nbcontrollers );
         isGamepad = true;
+        nbcontrollers++;
         break;
 
       default://TODO : Support keyboard and mouse, later...
-        isGamepad = false;
         ConnectedControllers[nbcontrollers].LeftJoystick = false;
         ConnectedControllers[nbcontrollers].RightJoystick = false;
         Com_Printf( "Other device type detected = %d. id = %d\n", CurrentType, i );
@@ -305,13 +306,10 @@ void IN_Init( void *windowData )
       }
       ConnectedControllers[nbcontrollers].ID = i;
       ConnectedControllers[nbcontrollers].type = CurrentType;
-
-      nbcontrollers++;
-
     }
   } //End loop all 10 max controllers
 
-  //TODO : add only the 4 pirst controllers to in_joystick.
+  //TODO : add only the 4 first controllers to in_joystick.
 
 }
 
